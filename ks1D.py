@@ -1,13 +1,14 @@
 import numpy as np
 import pickle
 import matplotlib
-import pickle
 import pyfftw
 from math import pi as PI
 from decimal import Decimal
 from matplotlib import cm, rc
 from matplotlib.colors import LinearSegmentedColormap
 from mpl_toolkits.mplot3d import Axes3D
+#from matplotlib import animation
+#from JSAnimation import IPython_display
 
 matplotlib.rc('xtick', labelsize=30)
 matplotlib.rc('ytick', labelsize=30)
@@ -40,6 +41,7 @@ def initc(x):  # Initial condition
  
     u0 = np.zeros_like(x, dtype='longdouble')
     u0 = np.cos(x/L)*(1.+np.sin(x/L))
+    #u0 = np.sin(x/L)
 
     return u0
 
@@ -51,7 +53,7 @@ def wavenum(Mx):  # Wavenumber evaluation in Fourier space
 
     return kx
 
-def fftrtf(uspec):  # Replicate half of the variable for symmetry in Fourier space  
+def fftrtf(uspec):  # Replicate half of the variable for symmetry in Fourier space 
 
     rtf = pyfftw.empty_aligned((Mx,), dtype='clongdouble')
     usp = np.conjugate(uspec[::-1])
@@ -116,27 +118,29 @@ def fwnum(Mx):
 
     return alpha
  
-def kssol(u0):  # Solver for start at time t = 0  
+def kssol1(u0):  # Solver for start at time t = 0   
 
-    Tf = Decimal("150.0")                       # Final time
-    t = Decimal("0.0")				# Current time
+    Tf = Decimal("150.0")                          						# Final time
+    t = Decimal("0.0")										# Current time
     h = Decimal("0.25")
-    dt = float(h)				# Size of each time step
-    nt = int(Tf/h)  				# Number of time steps
+    #Tf = Decimal("1000.0")                          						# Final time
+    #t = Decimal("0.0")										# Current time
+    #h = Decimal("0.01")
+    dt = float(h)		                         					# Size of the time step
+    nt = int(Tf/h)  
 
     kx = wavenum(Mx)
            					
     A = np.ones((Mx//2+1,)) 
     k2 = -(kx**2)+(kx**4)
-    k2 += (c*A)
           
-    u = pyfftw.empty_aligned((Mx//2+1,nt+1), dtype='clongdouble')  # Variable in Fourier space
+    u = pyfftw.empty_aligned((Mx//2+1,nt+1), dtype='clongdouble')
     us0 = pyfftw.empty_aligned((Mx//2+1,), dtype='clongdouble')
     u[:,0] = pyfftw.interfaces.numpy_fft.rfft(u0)
     u[0,0] -= u[0,0]
-    nlin = pyfftw.empty_aligned((Mx//2+1,nt+1), dtype='clongdouble')  
+    nlin = pyfftw.empty_aligned((Mx//2+1,nt+1), dtype='clongdouble')
     nlin[:,0] = aalias(u[:,0])
-    nlinspec = pyfftw.empty_aligned((Mx//2+1,nt+1), dtype='clongdouble')  # Non-linear term in Fourier space
+    nlinspec = pyfftw.empty_aligned((Mx//2+1,nt+1), dtype='clongdouble')
     nlinspec[:,0] = -0.5*1j*kx*nlin[:,0]
     nls = pyfftw.empty_aligned((Mx//2+1,), dtype='clongdouble')
     nlspec = pyfftw.empty_aligned((Mx//2+1,), dtype='clongdouble')
@@ -144,24 +148,24 @@ def kssol(u0):  # Solver for start at time t = 0
     nondx2 = pyfftw.empty_aligned((Mx,nt+1), dtype='longdouble')
     nondx[:,0] = alias(1j*fwnum(Mx)*fftrtf(u[:,0]))
     nondx2[:,0] = alias(-1.*((fwnum(Mx))**2)*fftrtf(u[:,0]))
-    ur = pyfftw.empty_aligned((Mx,nt+1), dtype='longdouble')  # Variable in real space
+    ur = pyfftw.empty_aligned((Mx,nt+1), dtype='longdouble')
     ur[:,0] = pyfftw.interfaces.numpy_fft.irfft(u[:,0]).real
     wt = weights(x)        
-    en = np.empty((nt+1,), dtype='longdouble')  # Energy calculation
+    en = np.empty((nt+1,), dtype='longdouble')
     en[0] = np.dot(wt, ur[:,0]*ur[:,0])
-    ent = np.empty((nt+1,), dtype='longdouble')  # Time-derivative of energy dE/dt
+    ent = np.empty((nt+1,), dtype='longdouble')
     ent[0] = (2.*np.dot(wt, nondx[:,0]))-(2.*np.dot(wt, nondx2[:,0]))
     
     for i in range(nt):
         t += h
         print t
         if i==0:
-            us0 = (u[:,i] + (dt*nlinspec[:,i]) + (dt*c*u[:,i]))/(A + (dt*(k2+A)))
+            us0 = (u[:,i] + (dt*nlinspec[:,i]))/(A + (dt*k2))
             us0[0] -= us0[0]
             us0[-1] -= us0[-1]
             nls[:] = aalias(0.5*(u[:,0]+us0))
             nlspec[:] = -0.5*1j*kx*nls[:]
-            u[:,i+1] = (u[:,i] - (0.5*dt*k2*u[:,i]) + (dt*nlspec[:]) + (0.5*dt*c*(u[:,i]+us0)))/(A + (0.5*dt*(k2+A)))
+            u[:,i+1] = (u[:,i] - (0.5*dt*k2*u[:,i]) + (dt*nlspec[:]))/(A + (0.5*dt*k2))
             u[0,i+1] -= u[0,i+1]
             u[-1,i+1] -= u[-1,i+1]
             ur[:,i+1] = pyfftw.interfaces.numpy_fft.irfft(u[:,i+1]).real
@@ -174,7 +178,7 @@ def kssol(u0):  # Solver for start at time t = 0
         elif i==1:
             nlin[:,i] = aalias(u[:,i])
             nlinspec[:,i] = -0.5*1j*kx*nlin[:,i]
-            u[:,i+1] = ((4*u[:,i]) - u[:,i-1] + (4*dt*nlinspec[:,i]) +(4*dt*c*u[:,i]) - (2*dt*nlinspec[:,i-1]) - (2*dt*c*u[:,i-1]))/((3*A) + (2*dt*(k2+A)))
+            u[:,i+1] = ((4*u[:,i]) - u[:,i-1] + (4*dt*nlinspec[:,i]) - (2*dt*nlinspec[:,i-1]))/((3*A) + (2*dt*k2))
             u[0,i+1] -= u[0,i+1]
             u[-1,i+1] -= u[-1,i+1]
             ur[:,i+1] = pyfftw.interfaces.numpy_fft.irfft(u[:,i+1]).real
@@ -187,7 +191,7 @@ def kssol(u0):  # Solver for start at time t = 0
         else:
             nlin[:,i] = aalias(u[:,i])
             nlinspec[:,i] = -0.5*1j*kx*nlin[:,i]
-            u[:,i+1] = ((18*u[:,i]) - (9*u[:,i-1]) + (2*u[:,i-2]) + (18*dt*nlinspec[:,i]) + (18*dt*c*u[:,i]) - (18*dt*nlinspec[:,i-1]) - (18*dt*c*u[:,i-1]) + (6*dt*nlinspec[:,i-2]) + (6*dt*c*u[:,i-2]))/((11*A) + (6*dt*(k2+A)))
+            u[:,i+1] = ((18*u[:,i]) - (9*u[:,i-1]) + (2*u[:,i-2]) + (18*dt*nlinspec[:,i]) - (18*dt*nlinspec[:,i-1]) + (6*dt*nlinspec[:,i-2]))/((11*A) + (6*dt*k2))
             u[0,i+1] -= u[0,i+1]
             u[-1,i+1] -= u[-1,i+1]
             ur[:,i+1] = pyfftw.interfaces.numpy_fft.irfft(u[:,i+1]).real   
@@ -200,8 +204,7 @@ def kssol(u0):  # Solver for start at time t = 0
 
     return u, ur, en, ent
 
-
-def kssol2(u1,u2,u3):  # Solver for restart at any time step  
+def kssol2(u1,u2,u3):  # Solver for restart at any time step 
 
     Tf = Decimal("150.0")
     h = Decimal("0.25")
@@ -243,7 +246,7 @@ def kssol2(u1,u2,u3):  # Solver for restart at any time step
     
     for i in range(nt):
         print i
-        u[:,i+1] = ((18*u[:,i]) - (9*u[:,i-1]) + (2*u[:,i-2]) + (18*dt*nlinspec[:,i]) +(18*dt*c*u[:,i]) - (18*dt*nlinspec[:,i-1]) - (18*dt*c*u[:,i-1]) + (6*dt*nlinspec[:,i-2]) + (6*dt*c*u[:,i-2]))/((11*A) + (6*dt*k2))
+        u[:,i+1] = ((18*u[:,i]) - (9*u[:,i-1]) + (2*u[:,i-2]) + (18*dt*nlinspec[:,i]) - (18*dt*nlinspec[:,i-1]) + (6*dt*nlinspec[:,i-2]))/((11*A) + (6*dt*k2))
         u[0,i+3] -= u[0,i+3]
         u[-1,i+3] -= u[-1,i+3]
         #u[:,i+3].real -= u[:,i+3].real
@@ -257,15 +260,37 @@ def kssol2(u1,u2,u3):  # Solver for restart at any time step
         #nondx2[:,i] = pyfftw.interfaces.numpy_fft.ifft(antialias(-1.*((fwnum(Mx))**2)*fftrtf(u[:,i+3]),-1.*((fwnum(Mx))**2)*fftrtf(u[:,i+3]))) 
         ent[i+1] = (2.*np.dot(wt, nondx[:,i+1]))-(2.*nu*np.dot(wt, nondx2[:,i+1]))       
 
-    return u, ur, en, ent        
-          									
+    return u, ur, en, ent            									
 
-Mx = 2**7							
-L = 16
-dx = (2.*L*PI)/np.float(Mx)                    							
-c = 0.               						
-x = np.arange(0., Mx)*dx
-u0 = initc(x)
-u, ur, en, ent = kssol(u0)
+Mx = 2**7                  # Number of modes							
+L = 16			   # Length of domain
+dx = (2.*L*PI)/np.float(Mx)                  						
+x = np.arange(0., Mx)*dx      								
+ 
+u0 = initc(x)		   # Initial condition
 
-    
+u, ur, en, ent = kssol1(u0)
+
+t = np.linspace(0., 150., 601)
+
+X, T = np.meshgrid(x,t,indexing='ij')
+
+# Plot contour map of the solution
+fig = plt.figure(figsize=(10,5))
+ax = fig.gca()
+levels = np.linspace(ur.min(), ur.max(), 50)
+cp = plt.contourf(X,T,ur,levels=levels,cmap=plt.cm.jet,extend='both')
+cb = plt.colorbar(cp)
+cb.cmap.set_under('black')
+tick_locator = ticker.MaxNLocator(nbins=5)
+cb.locator = tick_locator
+cb.update_ticks()
+
+ax.set_xlim([0.,100.])
+ax.set_xticks([0., 20., 40., 60., 80., 100.])
+ax.set_ylim([0.,150.])
+ax.set_yticks([0., 50., 100., 150.])
+ax.margins(0,0)
+ax.set_xlabel(r'$x$', fontweight='bold') 
+ax.set_ylabel(r'$t$', rotation=90., fontweight='bold')
+plt.show()
